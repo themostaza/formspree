@@ -2,14 +2,6 @@ development.env
 *.py[cod]
 node_modules
 npm-debug.log
-ssl-keys
-dart-sass
-dump.rdb
-formspree/static/bundle.js
-formspree/static/bundle.min.js
-formspree/static/main.css
-formspree/static/main.min.css
-*tmp-browserify*
 
 # C extensions
 *.so
@@ -32,7 +24,6 @@ env
 venv
 test_form/
 __pycache__
-.pytest_cache
 
 # Installer logs
 pip-log.txt
@@ -62,16 +53,14 @@ nosetests.xml
 codekit-config.json
 .idea/*
 
+.env
+
 aliases.json
 
-.env
-.venv 
 dev.env
 sta.env
 pro.env
 test.env
-
-.vscode
 
 celerybeat-schedule.db
 .Python
@@ -79,5 +68,3 @@ include
 
 mydata
 *.dump
-
-.python-version

@@ -2,24 +2,17 @@ import hmac
 import random
 import hashlib
 import datetime
-import pystache
 
-from flask import url_for, render_template, render_template_string, g
-from sqlalchemy.sql import table
+from formspree.app import DB, redis_store
+from formspree import settings
+from formspree.utils import send_email, unix_time_for_12_months_from_now, \
+                            next_url, IS_VALID_EMAIL, request_wants_json
+from flask import url_for, render_template, g
 from sqlalchemy.sql.expression import delete
-from sqlalchemy.dialects.postgresql import JSON
-from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy import func
 from werkzeug.datastructures import ImmutableMultiDict, \
                                     ImmutableOrderedMultiDict
-from premailer import transform
-
-from formspree import settings
-from formspree.stuff import DB, redis_store, TEMPLATES
-from formspree.utils import send_email, unix_time_for_12_months_from_now, \
-                            next_url, IS_VALID_EMAIL, request_wants_json
-from formspree.users.models import Plan
-from .helpers import HASH, HASHIDS_CODEC, REDIS_COUNTER_KEY, \
+from helpers import HASH, HASHIDS_CODEC, REDIS_COUNTER_KEY, \
                     http_form_to_dict, referrer_to_path, \
                     store_first_submission, fetch_first_submission, \
                     KEYS_NOT_STORED
@@ -40,12 +33,9 @@ class Form(DB.Model):
     owner_id = DB.Column(DB.Integer, DB.ForeignKey('users.id'))
     captcha_disabled = DB.Column(DB.Boolean)
     uses_ajax = DB.Column(DB.Boolean)
-    disable_email = DB.Column(DB.Boolean)
-    disable_storage = DB.Column(DB.Boolean)
 
     owner = DB.relationship('User') # direct owner, defined by 'owner_id'
                                     # this property is basically useless. use .controllers
-    template = DB.relationship('EmailTemplate', uselist=False, back_populates='form')
     submissions = DB.relationship('Submission',
         backref='form', lazy='dynamic', order_by=lambda: Submission.id.desc())
 
@@ -72,7 +62,6 @@ class Form(DB.Model):
     STATUS_EMAIL_FAILED            = 2
     STATUS_OVERLIMIT               = 3
     STATUS_REPLYTO_ERROR           = 4
-    STATUS_NO_EMAIL                = 5
 
     STATUS_CONFIRMATION_SENT       = 10
     STATUS_CONFIRMATION_DUPLICATED = 11
@@ -110,18 +99,9 @@ class Form(DB.Model):
         return by_email.union(by_creation)
 
     @property
-    def features(self):
-        return set.union(*[cont.features for cont in self.controllers])
-
-    def controlled_by(self, user):
-        for cont in self.controllers:
-            if cont.id == user.id:
-                return True
-        return False
-
-    def has_feature(self, feature):
-        c = [user for user in self.controllers if user.has_feature(feature)]
-        return len(c) > 0
+    def upgraded(self):
+        upgraded_controllers = [i for i in self.controllers if i.upgraded]
+        return len(upgraded_controllers) > 0
 
     @classmethod
     def get_with_hashid(cls, hashid):
@@ -130,52 +110,6 @@ class Form(DB.Model):
             return cls.query.get(id)
         except IndexError:
             return None
-
-    def serialize(self):
-        return {
-            'sitewide': self.sitewide,
-            'hashid': self.hashid,
-            'hash': self.hash,
-            'counter': self.counter,
-            'email': self.email,
-            'host': self.host,
-            'template': self.template.serialize() if self.template else None,
-            'features': {f: True for f in self.features},
-            'confirm_sent': self.confirm_sent,
-            'confirmed': self.confirmed,
-            'disabled': self.disabled,
-            'captcha_disabled': self.captcha_disabled,
-            'disable_email': self.disable_email,
-            'disable_storage': self.disable_storage,
-            'is_public': bool(self.hash),
-            'url': '{S}/{E}'.format(
-                S=settings.SERVICE_URL,
-                E=self.hashid
-            )
-        }
-
-    def submissions_with_fields(self):
-        '''
-        Fetch all submissions, extract all fields names from every submission
-        into a single fields list, excluding the KEYS_NOT_STORED values, because
-        they are worthless.
-        Add the special 'date' field to every submission entry, based on
-        .submitted_at, and use this as the first field on the fields array.
-        '''
-
-        fields = set()
-        submissions = []
-        for s in self.submissions:
-            data = s.data.copy()
-            fields.update(data.keys())
-            data["date"] = s.submitted_at.isoformat()
-            data["id"] = s.id
-            for k in KEYS_NOT_STORED:
-                data.pop(k, None)
-            submissions.append(data)
-
-        fields = ['date'] + sorted(fields - KEYS_NOT_STORED)
-        return submissions, fields
 
     def send(self, data, keys, referrer):
         '''
@@ -193,7 +127,6 @@ class Form(DB.Model):
         next = next_url(referrer, data.get('_next'))
         spam = data.get('_gotcha', None)
         format = data.get('_format', None)
-        from_name = None
 
         # turn cc emails into array
         if cc:
@@ -224,20 +157,15 @@ class Form(DB.Model):
 
         # increment the forms counter
         self.counter = Form.counter + 1
+        DB.session.add(self)
 
-        # if submission storage is disabled, don't store submission
-        if self.disable_storage and self.has_feature('dashboard'):
-            pass
-        else:
-            DB.session.add(self)
+        # archive the form contents
+        sub = Submission(self.id)
+        sub.data = {key: data[key] for key in data if key not in KEYS_NOT_STORED}
+        DB.session.add(sub)
 
-            # archive the form contents
-            sub = Submission(self.id)
-            sub.data = {key: data[key] for key in data if key not in KEYS_NOT_STORED}
-            DB.session.add(sub)
-
-            # commit changes
-            DB.session.commit()
+        # commit changes
+        DB.session.commit()
 
         # sometimes we'll delete all archived submissions over the limit
         if random.random() < settings.EXPENSIVELY_WIPE_SUBMISSIONS_FREQUENCY:
@@ -249,119 +177,82 @@ class Form(DB.Model):
             if total_records > records_to_keep:
                 newest = self.submissions.with_entities(Submission.id).limit(records_to_keep)
                 DB.engine.execute(
-                  delete(table('submissions')). \
+                  delete('submissions'). \
                   where(Submission.form_id == self.id). \
                   where(~Submission.id.in_(newest))
                 )
 
-        # url to request_unconfirm_form page
-        unconfirm = url_for('request_unconfirm_form', form_id=self.id, _external=True)
-
-        # check if the forms are over the counter and the user has unlimited submissions
+        # check if the forms are over the counter and the user is not upgraded
         overlimit = False
         monthly_counter = self.get_monthly_counter()
-        monthly_limit = settings.MONTHLY_SUBMISSIONS_LIMIT \
-                if self.id > settings.FORM_LIMIT_DECREASE_ACTIVATION_SEQUENCE \
-                else settings.GRANDFATHER_MONTHLY_LIMIT
-
-        if monthly_counter > monthly_limit and not self.has_feature('unlimited'):
+        if monthly_counter > settings.MONTHLY_SUBMISSIONS_LIMIT and not self.upgraded:
             overlimit = True
 
-        if monthly_counter == int(monthly_limit * 0.9) and \
-                        not self.has_feature('unlimited'):
+        if monthly_counter == int(settings.MONTHLY_SUBMISSIONS_LIMIT * 0.9) and not self.upgraded:
             # send email notification
             send_email(
                 to=self.email,
-                subject="Formspree Notice: Approaching submission limit.",
-                text=render_template('email/90-percent-warning.txt',
-                    unconfirm_url=unconfirm, limit=monthly_limit
-                ),
-                html=render_template_string(
-                    TEMPLATES.get('90-percent-warning.html'),
-                    unconfirm_url=unconfirm, limit=monthly_limit
-                ),
+                subject="[WARNING] Approaching submission limit",
+                text=render_template('email/90-percent-warning.txt'),
+                html=render_template('email/90-percent-warning.html'),
                 sender=settings.DEFAULT_SENDER
             )
 
         now = datetime.datetime.utcnow().strftime('%I:%M %p UTC - %d %B %Y')
-
         if not overlimit:
-            g.log.info('Submitted.')
-            text = render_template('email/form.txt',
-                data=data, host=self.host, keys=keys, now=now,
-                unconfirm_url=unconfirm)
-
-            # if there's a custom email template we should use it
-            # otherwise check if the user wants a new or old version of the email
-            if self.has_feature('whitelabel') and self.template:
-                html, subject = self.template.render_body_and_subject(
-                    data=data, host=self.host, keys=keys, now=now,
-                    unconfirm_url=unconfirm)
-                from_name = self.template.from_name
-            elif format == 'plain':
-                html = render_template('email/plain_form.html',
-                    data=data, host=self.host, keys=keys, now=now,
-                    unconfirm_url=unconfirm)
+            text = render_template('email/form.txt', data=data, host=self.host, keys=keys, now=now)
+            # check if the user wants a new or old version of the email
+            if format == 'plain':
+                html = render_template('email/plain_form.html', data=data, host=self.host, keys=keys, now=now)
             else:
-                html = render_template_string(TEMPLATES.get('form.html'),
-                    data=data, host=self.host, keys=keys, now=now,
-                    unconfirm_url=unconfirm)
+                html = render_template('email/form.html', data=data, host=self.host, keys=keys, now=now)
         else:
-            g.log.info('Submission rejected. Form over quota.',
-                monthly_counter=monthly_counter)
-            # send an overlimit notification for the first x overlimit emails
-            # after that, return an error so the user can know the website owner is not
-            # going to read his message.
-            if monthly_counter <= monthly_limit + settings.OVERLIMIT_NOTIFICATION_QUANTITY:
-                subject = 'Formspree Notice: Your submission limit has been reached.'
-                text = render_template('email/overlimit-notification.txt',
-                    host=self.host, unconfirm_url=unconfirm, limit=monthly_limit)
-                html = render_template_string(TEMPLATES.get('overlimit-notification.html'),
-                    host=self.host, unconfirm_url=unconfirm, limit=monthly_limit)
-            else:
-                return {'code': Form.STATUS_OVERLIMIT}
+            if monthly_counter - settings.MONTHLY_SUBMISSIONS_LIMIT > 25:
+                g.log.info('Submission rejected. Form over quota.', monthly_counter=monthly_counter)
+                # only send this overlimit notification for the first 25 overlimit emails
+                # after that, return an error so the user can know the website owner is not
+                # going to read his message.
+                return { 'code': Form.STATUS_OVERLIMIT }
 
-        # if emails are disabled, don't send email notification
-        if self.disable_email and self.has_feature('dashboard'):
-            return {'code': Form.STATUS_NO_EMAIL, 'next': next}
-        else:
-            result = send_email(
-                to=self.email,
-                subject=subject,
-                text=text,
-                html=html,
-                sender=settings.DEFAULT_SENDER,
-                from_name=from_name,
-                reply_to=reply_to,
-                cc=cc,
-                headers={
-                    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-                    'List-Unsubscribe': '<' + url_for(
-                        'unconfirm_form',
-                        form_id=self.id,
-                        digest=self.unconfirm_digest(),
-                        _external=True
-                    ) + '>'
-                }
-            )
+            text = render_template('email/overlimit-notification.txt', host=self.host)
+            html = render_template('email/overlimit-notification.html', host=self.host)
 
-            if not result[0]:
-                g.log.warning('Failed to send email.',
-                              reason=result[1], code=result[2])
-                if result[1].startswith('Invalid replyto email address'):
-                    return {
-                        'code': Form.STATUS_REPLYTO_ERROR,
-                        'address': reply_to,
-                        'referrer': referrer
-                    }
+        result = send_email(
+            to=self.email,
+            subject=subject,
+            text=text,
+            html=html,
+            sender=settings.DEFAULT_SENDER,
+            reply_to=reply_to,
+            cc=cc,
+            headers={
+                'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+                'List-Unsubscribe': '<' + url_for(
+                    'unconfirm_form',
+                    form_id=self.id,
+                    digest=self.unconfirm_digest(),
+                    _external=True
+                ) + '>'
+            }
+        )
 
+        if not result[0]:
+            g.log.warning('Failed to send email.',
+                          reason=result[1], code=result[2])
+            if result[1].startswith('Invalid replyto email address'):
                 return {
-                    'code': Form.STATUS_EMAIL_FAILED,
-                    'mailer-code': result[2],
-                    'error-message': result[1]
+                    'code': Form.STATUS_REPLYTO_ERROR,
+                    'address': reply_to,
+                    'referrer': referrer
                 }
 
-            return {'code': Form.STATUS_EMAIL_SENT, 'next': next}
+            return {
+                'code': Form.STATUS_EMAIL_FAILED,
+                'mailer-code': result[2],
+                'error-message': result[1]
+            }
+
+        return {'code': Form.STATUS_EMAIL_SENT, 'next': next}
 
     def get_monthly_counter(self, basedate=None):
         basedate = basedate or datetime.datetime.now()
@@ -408,24 +299,18 @@ class Form(DB.Model):
                 else:
                     store_first_submission(nonce, store_data)
 
-            params = dict(
-                email=self.email,
-                host=self.host,
-                nonce_link=link,
-                keys=keys
-            )
-            if ext == 'html':
-                return render_template_string(TEMPLATES.get('confirm.html'), **params)
-            elif ext == 'txt':
-                return render_template('email/confirm.txt', **params)
+            return render_template('email/confirm.%s' % ext,
+                                   email=self.email,
+                                   host=self.host,
+                                   nonce_link=link,
+                                   keys=keys)
 
         DB.session.add(self)
         DB.session.flush()
 
         result = send_email(
             to=self.email,
-            subject='Confirm email for {} on {}' \
-                .format(settings.SERVICE_NAME, self.host),
+            subject='Confirm email for %s' % settings.SERVICE_NAME,
             text=render_content('txt'),
             html=render_content('html'),
             sender=settings.DEFAULT_SENDER,
@@ -492,14 +377,14 @@ class Form(DB.Model):
     def unconfirm_digest(self):
         return hmac.new(
             settings.NONCE_SECRET,
-            'id={}'.format(self.id).encode('utf-8'),
+            'id={}'.format(self.id),
             hashlib.sha256
         ).hexdigest()
 
     def unconfirm_with_digest(self, digest):
         if hmac.new(
             settings.NONCE_SECRET,
-            'id={}'.format(self.id).encode('utf-8'),
+            'id={}'.format(self.id),
             hashlib.sha256
         ).hexdigest() != digest:
             return False
@@ -510,81 +395,15 @@ class Form(DB.Model):
         return True
 
 
-class EmailTemplate(DB.Model):
-    __tablename__ = 'email_templates'
-
-    id = DB.Column(DB.Integer, primary_key=True)
-    form_id = DB.Column(
-        DB.Integer, DB.ForeignKey('forms.id'),
-        unique=True, nullable=False
-    )
-    subject = DB.Column(DB.Text, nullable=False)
-    from_name = DB.Column(DB.Text, nullable=False)
-    style = DB.Column(DB.Text, nullable=False)
-    body = DB.Column(DB.Text, nullable=False)
-    
-    form = DB.relationship('Form', back_populates='template')
-
-    def __init__(self, form_id):
-        self.submitted_at = datetime.datetime.utcnow()
-        self.form_id = form_id
-
-    def __repr__(self):
-        return '<Email Template %s, form=%s>' % \
-            (self.id or 'with an id to be assigned', self.form_id)
-
-    @classmethod
-    def make_sample(cls, style, body,
-               from_name='Formspree Team',
-               subject='New submission from {{ _host }}'):
-        t = cls(0)
-        t.from_name = from_name
-        t.subject = subject
-        t.style = style
-        t.body = body
-        return t.sample()
-
-    def sample(self):
-        return self.render_body_and_subject(
-            data={
-                'name': 'Irwin Jones',
-                '_replyto': 'i.jones@example.com',
-                'message': 'Hello!\n\nThis is a preview message!'
-            },
-            host='example.com/',
-            keys=['name', '_replyto', 'message'],
-            now=datetime.datetime.utcnow().strftime('%I:%M %p UTC - %d %B %Y'),
-            unconfirm_url='#'
-        )
-
-    def serialize(self):
-        return {
-            'subject': self.subject,
-            'from_name': self.from_name,
-            'style': self.style,
-            'body': self.body
-        }
-
-    def render_body_and_subject(self, data, host, keys, now, unconfirm_url):
-        data.update({
-            '_fields': [{'_name': f, '_value': data[f]} for f in keys],
-            '_time': now,
-            '_host': host
-        })
-        subject = pystache.render(self.subject, data)
-        html = pystache.render('<style>' + self.style + '</style>' + self.body, data)
-        print(html)
-        inlined = transform(html)
-        suffixed = inlined + '''<table width="100%"><tr><td>You are receiving this because you confirmed this email address on <a href="{service_url}">{service_name}</a>. If you don't remember doing that, or no longer wish to receive these emails, please remove the form on {host} or <a href="{unconfirm_url}">click here to unsubscribe</a> from this endpoint.</td></tr></table>'''.format(service_url=settings.SERVICE_URL, service_name=settings.SERVICE_NAME, host=host, unconfirm_url=unconfirm_url)
-        return suffixed, subject
-
+from sqlalchemy.dialects.postgresql import JSON
+from sqlalchemy.ext.mutable import MutableDict
 
 class Submission(DB.Model):
     __tablename__ = 'submissions'
 
     id = DB.Column(DB.Integer, primary_key=True)
     submitted_at = DB.Column(DB.DateTime)
-    form_id = DB.Column(DB.Integer, DB.ForeignKey('forms.id'), nullable=False)
+    form_id = DB.Column(DB.Integer, DB.ForeignKey('forms.id'))
     data = DB.Column(MutableDict.as_mutable(JSON))
 
     def __init__(self, form_id):

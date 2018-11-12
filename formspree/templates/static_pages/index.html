@@ -2,22 +2,19 @@
 
 {% block bodyid %}{% endblock %}
 
-{% block title %}A Contact Form to Email Service | {{config.SERVICE_NAME}}{% endblock %}
-{% block meta %}<meta name="description" content="Formspree is a form backend, API and email service for HTML forms. It’s the simplest way to embed custom contact us forms, order forms, or email capture forms on your static site."/>
-{% endblock %}
-
 {% block base %}
   <div class="row section" id="header">
         <div class="container" id="title">
             <div class="col-1-1">
                 <img src="/static/img/logo.png" alt="" class="center animate dropIn">
-                <p class="h1-seo-hack center"><span class="caps">{{config.SERVICE_NAME}}</span></p>
+                <h1 class="center"><span class="caps">{{config.SERVICE_NAME}}</span></h1>
+
             </div>
         </div>
       <div class="container">
           <div class="col-1-2">
-            <h1 style="font-weight: 900;">Carefree Contact Forms</h1>
-            <h2 class="h3-seo-hack light">Connect your forms to our endpoint and we’ll email you the submissions. No PHP, Javascript or sign up required &mdash; <em>perfect for static sites!</em></h2>
+            <h1 style="font-weight: 900;">Functional HTML forms</h1>
+            <h3 class="light">Just send your form to our URL and we'll forward it to your email. No PHP, Javascript or sign up required &mdash; <em>perfect for static sites!</em></h3>
             </div>
             <div class="col-1-2">
                 <p>Example:</p>
@@ -37,8 +34,8 @@
 
       <div class="container narrow block">
           <div class="col-1-1">
-              <p class="h2-seo-hack">Setting it up is easy and free. Here's how:</p>
-              <p class="h3-seo-hack light">You don't even have to register.</p>
+              <h2>Setting it up is easy and free. Here's how:</h2>
+              <h3 class="light">You don't even have to register.</h3>
           </div>
       </div>
 
@@ -78,7 +75,7 @@
   <div class="row section grey">
 
       <div class="container block">
-          <div class="col-1-1"><p class="h2-seo-hack">Some questions you might have:</p></div>
+          <div class="col-1-1"><h2>Some questions you might have:</h2></div>
       </div>
 
       <div class="container block">
@@ -91,7 +88,7 @@
             <div class="col-1-2">
                 <div class="card">
                     <h4>What about privacy?</h4>
-                    <p>We only store up to {{ config.ARCHIVED_SUBMISSIONS_LIMIT }} form submissions per month. For details on our privacy practices, please see our <a href="http://docs.formspree.io/files/privacy.pdf">privacy policy</a>.</p>
+                    <p>We only store contents of the last 100 form submissions and delete the rest. Emails are sent using SendGrid's API, so on that end their privacy policies apply.</p>
                 </div>
             </div>
       </div>
@@ -100,7 +97,7 @@
             <div class="col-1-2">
                 <div class="card">
                     <h4>How much does it cost?</h4>
-                    <p>{{config.SERVICE_NAME}} is free for {{ config.MONTHLY_SUBMISSIONS_LIMIT }} submissions per form each month. If you need more, there's a <a href="#plans">{{ config.UPGRADED_PLAN_NAME }} Plan</a></p>
+                    <p>{{config.SERVICE_NAME}} is free for 1000 submissions per email each month. If you need more, there's a <a href="#plans">{{ config.UPGRADED_PLAN_NAME }} Plan</a>.</p>
                 </div>
             </div>
             <div class="col-1-2">
@@ -117,7 +114,7 @@
 
       <div class="container narrow block">
           <div class="col-1-1">
-            <p class="h2-seo-hack">Advanced features:</p>
+            <h2>Advanced features:</h2>
             <h4 class="light">Form inputs can have specially named <span class="code">name</span>-attributes, which alter functionality. They are all prefixed with an underscore.</h4>
           </div>
       </div>
@@ -134,7 +131,7 @@
             <div class="col-1-1">
                 <h4><span class="code">_next</span></h4>
                 <p>By default, after submitting a form the user is shown the {{config.SERVICE_NAME}} "Thank You" page. You can provide an alternative URL for that page.</p>
-                <p><input type="text" class="code" value='<input type="hidden" name="_next" value="https://site.io/thanks.html" />'></p>
+                <p><input type="text" class="code" value='<input type="hidden" name="_next" value="//site.io/thanks.html" />'></p>
             </div>
       </div>
 
@@ -170,7 +167,6 @@
               <p>We've gone global! If you want to display the reCAPTCHA page in a language other than English you can. We currently support
                 <span class="code">ar</span>,
                 <span class="code">bg</span>,
-                <span class="code">ca</span>,
                 <span class="code">cs</span>,
                 <span class="code">da</span>,
                 <span class="code">de</span>,
@@ -180,10 +176,8 @@
                 <span class="code">fr</span>,
                 <span class="code">hu</span>,
                 <span class="code">id</span>,
-                <span class="code">is</span>,
                 <span class="code">it</span>,
                 <span class="code">ja</span>,
-                <span class="code">ko</span>,
                 <span class="code">lt</span>,
                 <span class="code">nl</span>,
                 <span class="code">no</span>,
@@ -192,7 +186,6 @@
                 <span class="code">pt-PT</span>.
                 <span class="code">ru</span>,
                 <span class="code">sk</span>,
-                <span class="code">sr</span>,
                 <span class="code">sv</span>,
                 <span class="code">th</span>,
                 <span class="code">tr</span>,
@@ -228,9 +221,9 @@
   <div class="row section" id="plans">
       <div class="container narrow block">
             <div class="col-1-1">
-                <p class="h2-seo-hack">For {{ config.SERVICE_NAME }} power users, we present <strong>{{ config.SERVICE_NAME }} {{ config.UPGRADED_PLAN_NAME }}</strong></p>
+                <h2>For {{ config.SERVICE_NAME }} power users, we present <strong>{{ config.SERVICE_NAME }} {{ config.UPGRADED_PLAN_NAME }}</strong></h2>
                 <p class="center">{{ config.SERVICE_NAME }} {{ config.UPGRADED_PLAN_NAME }} costs</p>
-                <p class="h1-seo-hack center"><a class="button emphasis" href="{{ url_for('account') }}">$ 9.99</a></p>
+                <h1 class="center"><a class="button emphasis" href="{{ url_for('account') }}">$ 9.99</a></h1>
                 <p class="center">each month</p>
                 <p>Each {{ config.UPGRADED_PLAN_NAME }} account can have unlimited forms and unlimited verified emails, and all them get the <a href="#features">features listed below</a>.</p>
                 <a style="display: block" class="button center emphasis" href="{{ url_for('account') }}">Upgrade now</a>
@@ -241,7 +234,7 @@
   <div class="row section grey" id="features">
       <div class="container narrow block">
           <div class="col-1-1">
-            <p class="h2-seo-hack">{{ config.UPGRADED_PLAN_NAME }} features:</p>
+            <h2>{{ config.UPGRADED_PLAN_NAME }} features:</h2>
             <h3 class="light">Extra limits and functionality for power users</h3>
           </div>
       </div>
@@ -256,15 +249,15 @@
       <div class="container narrow block">
             <div class="col-1-1">
                 <h3>Unlimited form submissions</h3>
-                <p>Getting more than {{ config.MONTHLY_SUBMISSIONS_LIMIT }} submissions each month? No problem, upgrading will cover that.</p>
+                <p>Getting more than 1000 submissions each month? No problem, upgrading will cover that.</p>
             </div>
       </div>
 
       <div class="container narrow block">
             <div class="col-1-1">
                 <h3>Access to submissions archive</h3>
-                <p>If you ever missed a submission email, for any reason, you can just login and read your last {{ config.ARCHIVED_SUBMISSIONS_LIMIT }} submissions, all listed and timestamped with full data. Also, the submissions can be exported to CSV or JSON!</p>
-                <p>It even works for submissions made while you were not a {{ config.UPGRADED_PLAN_NAME }} user.</p>
+                <p>If you ever missed a submission email, for any reason, you can just login and read your last 1000 submissions, all listed and timestamped with full data. Also, the submissions can be exported to CSV or JSON!</p>
+                <p>It even works for submissions made while you were not a {{ config.UPGRADED_PLAN_NAME }} user (the last 100, in this case).</p>
             </div>
       </div>
 
@@ -303,33 +296,6 @@
                 <p>Don't want your users to complete a reCAPTCHA? Each form now comes with the option to disable the reCAPTCHA, so you can maintain complete control over your form. You can even keep reCAPTCHA on a few forms that might be suceptible to spam, while disabling it on others.</p>
             </div>
         </div>
-
-  </div>
-
-  <div class="row section">
-      <div class="container narrow block">
-          <div class="col-1-2">
-            <p>If you have a problem, please look <a href="http://help.formspree.io/">here</a> first. To sign up for our newsletter, use the form on the right.</p>
-            <p>For a quick demo of Formspree, <a href="http://testformspree.com/" target="_blank">click here</a>.</p>
-          </div>
-          <div class="col-1-2">
-            <form method="POST" action="{{config.API_ROOT}}/{{config.NEWSLETTER_EMAIL}}">
-              <input type="text" name="name" placeholder="Your name" required />
-              <input type="email" name="_replyto" placeholder="Your email" required />
-              <input type="text" name="_gotcha" style="display:none">
-              <input type="hidden" name="_format" value="plain" style="display:none">
-              <button style="width: 100%" type="submit">Get Our Newsletter</button>
-            </form>
-          </div>
-      </div>
-	  <div class="container block">
-      	<div class="col-1-1 center">
-          <a href="//facebook.com/formspree"><i class="fa fa-facebook-official fa-2x"></i></a>
-          <a href="//twitter.com/formspree"><i class="fa fa-twitter fa-2x"></i></a>
-          <a href="//github.com/formspree/formspree"><i class="fa fa-github fa-2x"></i></a>
-        </div>
-        <p class="col-1-1 center">{{config.SERVICE_NAME}} is a tool <a href="https://github.com/formspree/formspree">managed on GitHub</a>.<br>Please check out our <a href="http://docs.formspree.io/files/terms.pdf">Terms of Use</a> and <a href="http://docs.formspree.io/files/privacy.pdf">Privacy Policy</a>.</p>
-      </div>
 
   </div>
 

@@ -1,18 +1,15 @@
 import stripe
 import datetime
 
-from flask import request, flash, url_for, render_template, \
-                  render_template_string, redirect, g
-from flask_login import login_user, logout_user, \
+from flask import request, flash, url_for, render_template, redirect, g
+from flask.ext.login import login_user, logout_user, \
                             current_user, login_required
 from sqlalchemy.exc import IntegrityError
-
+from helpers import check_password, hash_pwd
+from formspree.app import DB
 from formspree import settings
-from formspree.stuff import DB, TEMPLATES
+from models import User, Email
 from formspree.utils import send_email
-from .models import User, Email, Plan
-from .helpers import check_password, hash_pwd, send_downgrade_email, \
-                     send_downgrade_reason_email
 
 
 def register():
@@ -25,17 +22,17 @@ def register():
         user = User(request.form['email'], request.form['password'])
         DB.session.add(user)
         DB.session.commit()
-        g.log.info('User account created.', ip=request.headers.get('X-Forwarded-For'))
+        g.log.info('User account created.')
     except ValueError:
         DB.session.rollback()
         flash(u"{} is not a valid email address.".format(
             request.form['email']), "error")
-        g.log.info('Account creation failed. Invalid address.', ip=request.headers.get('X-Forwarded-For'))
+        g.log.info('Account creation failed. Invalid address.')
         return render_template('users/register.html')
     except IntegrityError:
         DB.session.rollback()
         flash(u"An account with this email already exists.", "error")
-        g.log.info('Account creation failed. Address is already registered.', ip=request.headers.get('X-Forwarded-For'))
+        g.log.info('Account creation failed. Address is already registered.')
         return render_template('users/register.html')
 
     login_user(user, remember=True)
@@ -132,7 +129,6 @@ def login():
               'warning')
         return redirect(url_for('login'))
     login_user(user, remember=True)
-    g.log.info('Logged user in', user=user.email, ip=request.headers.get('X-Forwarded-For'))
     flash(u'Logged in successfully!', 'success')
     return redirect(request.args.get('next') or url_for('dashboard'))
 
@@ -231,7 +227,7 @@ def upgrade():
               "error")
         return redirect(url_for('dashboard'))
 
-    current_user.plan = Plan.gold
+    current_user.upgraded = True
     DB.session.add(current_user)
     DB.session.commit()
     flash(u"Congratulations! You are now a {SERVICE_NAME} "
@@ -274,12 +270,7 @@ def downgrade():
               "warning")
         return redirect(url_for('account'))
 
-    reason = request.form.get('why')
-    if reason:
-        send_downgrade_reason_email.delay(current_user.email, reason)
-
-    sub.cancel_at_period_end = True
-    sub.save()
+    sub = sub.delete(at_period_end=True)
     flash(u"You were unregistered from the {SERVICE_NAME} "
           "{UPGRADED_PLAN_NAME} plan.".format(**settings.__dict__),
           'success')
@@ -294,50 +285,38 @@ def downgrade():
 
 
 def stripe_webhook():
-    payload = request.data.decode('utf-8')
-    g.log.info('Received webhook from Stripe')
-
-    sig_header = request.headers.get('STRIPE_SIGNATURE')
-    event = None
+    event = request.get_json()
+    g.log.info('Webhook from Stripe', type=event['type'])
 
     try:
-        if settings.TESTING:
-            event = request.get_json()
-        else:
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, settings.STRIPE_WEBHOOK_SECRET)
-        if event['type'] == 'customer.subscription.deleted':  # User subscription has expired
+        if event['type'] == 'customer.subscription.deleted': # User subscription has expired
             customer_id = event['data']['object']['customer']
             customer = stripe.Customer.retrieve(customer_id)
             if len(customer.subscriptions.data) == 0:
                 user = User.query.filter_by(stripe_id=customer_id).first()
-                user.plan = Plan.free
+                user.upgraded = False
                 DB.session.add(user)
                 DB.session.commit()
                 g.log.info('Downgraded user from webhook.', account=user.email)
-                send_downgrade_email.delay(user.email)
-        elif event['type'] == 'invoice.payment_failed':  # User payment failed
+                send_email(to=customer.email,
+                           subject='Successfully Downgraded from {} {}'.format(settings.SERVICE_NAME, settings.UPGRADED_PLAN_NAME),
+                           text=render_template('email/downgraded.txt'),
+                           html=render_template('email/downgraded.html'),
+                           sender=settings.DEFAULT_SENDER)
+        elif event['type'] == 'invoice.payment_failed': # User payment failed
             customer_id = event['data']['object']['customer']
             customer = stripe.Customer.retrieve(customer_id)
             g.log.info('User payment failed', account=customer.email)
             send_email(to=customer.email,
-                       subject='[ACTION REQUIRED] Failed Payment for {} {}'.format(
-                           settings.SERVICE_NAME,
-                           settings.UPGRADED_PLAN_NAME
-                       ),
+                       subject='[ACTION REQUIRED] Failed Payment for {} {}'.format(settings.SERVICE_NAME,
+                                                                           settings.UPGRADED_PLAN_NAME),
                        text=render_template('email/payment-failed.txt'),
-                       html=render_template_string(TEMPLATES.get('payment-failed.html')),
+                       html=render_template('email/payment-failed.html'),
                        sender=settings.DEFAULT_SENDER)
-        return 'ok'
-    except ValueError as e:
+    except Exception as e:
         g.log.error('Webhook failed for customer', json=event, error=e)
         return 'Failure, developer please check logs', 500
-    except stripe.error.SignatureVerificationError as e:
-        g.log.error('Webhook failed Stripe signature verification', json=event, error=e)
-        return '', 400
-    except Exception as e:
-        g.log.error('Webhook failed for unknown reason', json=event, error=e)
-        return '', 500
+    return 'ok'
 
 
 @login_required
@@ -379,7 +358,7 @@ def add_card():
               'later. If this problem persists, please contact us.', 'error')
         g.log.warning("Couldn't add card to Stripe account. Unknown error.")
 
-    return redirect(url_for('billing-dashboard'))
+    return redirect(url_for('account'))
 
 @login_required
 def change_default_card(cardid):
@@ -392,7 +371,7 @@ def change_default_card(cardid):
     except Exception as e:
         flash(u"Sorry something went wrong. If this error persists, please contact support", 'error')
         g.log.warning("Failed to change default card", account=current_user.email, card=cardid)
-    return redirect(url_for('billing-dashboard'))
+    return redirect(url_for('account'))
 
 @login_required
 def delete_card(cardid):
@@ -403,7 +382,7 @@ def delete_card(cardid):
         g.log.info('Deleted card from account.', account=current_user.email)
     else:
         flash(u"That's an invalid operation", 'error')
-    return redirect(url_for('billing-dashboard'))
+    return redirect(url_for('account'))
 
 
 @login_required
@@ -436,7 +415,6 @@ def account():
                 sub.current_period_end = datetime.datetime.fromtimestamp(sub.current_period_end).strftime('%A, %B %d, %Y')
         except stripe.error.StripeError:
             return render_template('error.html', title='Unable to connect', text="We're unable to make a secure connection to verify your account details. Please try again in a little bit. If this problem persists, please contact <strong>%s</strong>" % settings.CONTACT_EMAIL)
-
     return render_template('users/account.html', emails=emails, cards=cards, sub=sub)
 
 @login_required
@@ -466,10 +444,6 @@ def billing():
 
         invoices = stripe.Invoice.list(customer=customer, limit=12)
         return render_template('users/billing.html', cards=cards, sub=sub, invoices=invoices)
-    else:
-        flash('You have not added your billing information to your Formspree account. '
-              'Please contact us if you believe this is an error', 'error')
-        return redirect(url_for('account'))
 
 @login_required
 def update_invoice_address():

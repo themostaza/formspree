@@ -4,7 +4,7 @@
 	<meta name="viewport" content="width=device-width" />
 	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 	<title>Overlimit Notification</title>
-    <link href="formspree/templates/email/pre_inline_style/email_styles.css" media="all" rel="stylesheet" type="text/css" />
+	<link href="email_styles.css" media="all" rel="stylesheet" type="text/css" />
 </head>
 <body itemscope itemtype="http://schema.org/EmailMessage">
 	<table class="body-wrap">
@@ -38,7 +38,7 @@
 									</tr>
 									<tr>
 										<td class="content-block">
-You are past the limit of {{ limit }} free submissions per month. Never fear! We have safely stored the content of this form in our archive. You can access it by logging in at {{ url_for('register', _external=True) }} and upgrading your account.
+											You are past our limit of {{ config.MONTHLY_SUBMISSIONS_LIMIT }} submissions per month. Never fear! We have safely stored the contents of this form in our databases, and you can access them by logging into your account, using the link below and upgrading your account.
 										</td>
 									</tr>
 									<tr>
@@ -53,7 +53,7 @@ You are past the limit of {{ limit }} free submissions per month. Never fear! We
 					<div class="footer">
 						<table width="100%">
 							<tr>
-								<td class="aligncenter content-block">You are receiving this because you confirmed this email address on <a href="{{config.SERVICE_URL}}">{{config.SERVICE_NAME}}</a>. If you don't remember doing that, or no longer wish to receive these emails, please remove the form on {{host}} or <a href="{{unconfirm_url}}">click here to unsubscribe</a> from this endpoint.</td>
+								<td class="aligncenter content-block">You are receiving this because you confirmed this email address on <a href="{{config.SERVICE_URL}}">{{config.SERVICE_NAME}}</a>. If you don't remember doing that, or no longer wish to receive these emails, please remove the form on {{host}} or send an email to <a href="mailto:{{config.CONTACT_EMAIL}}">{{config.CONTACT_EMAIL}}</a>.</td>
 							</tr>
                             {% include "email/footer.html" %}
 						</table>
